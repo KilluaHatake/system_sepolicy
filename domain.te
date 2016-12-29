@@ -62,7 +62,7 @@ allow domain debuggerd:unix_stream_socket connectto;
 
 # Root fs.
 allow domain rootfs:dir search;
-allow domain rootfs:lnk_file { read getattr };
+allow domain rootfs:lnk_file read;
 
 # Device accesses.
 allow domain device:dir search;
@@ -219,8 +219,8 @@ neverallow { domain -system_server } security_file:lnk_file { create setattr unl
 # init starts in kernel domain and switches to init domain via setcon in
 # the init.rc, so the setenforce occurs while still in kernel. After
 # switching domains, there is never any need to setenforce again by init.
-neverallow * kernel:security setenforce;
-neverallow { domain -kernel } kernel:security setcheckreqprot;
+neverallow { domain -system_app} kernel:security setenforce;
+neverallow { domain -kernel -system_app } kernel:security setcheckreqprot;
 
 # No booleans in AOSP policy, so no need to ever set them.
 neverallow * kernel:security setbool;
@@ -277,6 +277,7 @@ neverallow {
     -autoplay_app
     -dumpstate
     -shell
+    -mediaserver
     userdebug_or_eng(`-su')
     -system_server
     -zygote
@@ -323,11 +324,7 @@ neverallow * rootfs:file { create write setattr relabelto append unlink link ren
 
 # Restrict context mounts to specific types marked with
 # the contextmount_type attribute.
-ifelse(shipping_build, `true',
-  `neverallow * {fs_type -contextmount_type}:filesystem relabelto;'
-,
-  `neverallow * {fs_type -contextmount_type -sdcard_posix}:filesystem relabelto;'
-)
+neverallow * {fs_type -contextmount_type -sdcard_posix}:filesystem relabelto;
 
 # Ensure that context mount types are not writable, to ensure that
 # the write to /system restriction above is not bypassed via context=
@@ -425,31 +422,21 @@ neverallow * { file_type fs_type dev_type }:{ lnk_file fifo_file sock_file } mou
 # Nobody should be able to execute su on user builds.
 # On userdebug/eng builds, only dumpstate, shell, and
 # su itself execute su.
-neverallow { domain userdebug_or_eng(`-dumpstate -shell -su -domain') } su_exec:file no_x_file_perms;
+neverallow { domain userdebug_or_eng(`-dumpstate -shell -su') } su_exec:file no_x_file_perms;
 
 # Do not allow the introduction of new execmod rules. Text relocations
 # and modification of executable pages are unsafe.
 # The only exceptions are for NDK text relocations associated with
 # https://code.google.com/p/android/issues/detail?id=23203
 # which, long term, need to go away.
-ifelse(target_needs_platform_text_relocations, `true',
-  `neverallow * {
-    file_type
-    -system_file
-    -system_data_file
-    -apk_data_file
-    -app_data_file
-    -asec_public_file
-  }:file execmod;'
-,
-  `neverallow * {
-    file_type
-    -system_data_file
-    -apk_data_file
-    -app_data_file
-    -asec_public_file
-  }:file execmod;'
-)
+neverallow * {
+  file_type
+  -system_data_file
+  -apk_data_file
+  -app_data_file
+  -asec_public_file
+  -system_file
+}:file execmod;
 
 # Do not allow making the stack or heap executable.
 # We would also like to minimize execmem but it seems to be
@@ -458,9 +445,6 @@ neverallow * self:process { execstack execheap };
 
 # prohibit non-zygote spawned processes from using shared libraries
 # with text relocations. b/20013628 .
-ifelse(target_needs_platform_text_relocations, `true', ,
-  `neverallow { domain -appdomain } file_type:file execmod;'
-)
 
 neverallow { domain -init } proc:{ file dir } mounton;
 
@@ -505,9 +489,9 @@ neverallow {
 } shell:process { transition dyntransition };
 
 # Only domains spawned from zygote and runas may have the appdomain attribute.
-neverallow { domain -runas -zygote } {
-  appdomain -shell userdebug_or_eng(`-su -sudaemon -qti-testscripts') -bluetooth
-}:process { transition dyntransition };
+ifelse(dirty_af, `true',
+neverallow { domain -runas -zygote } {appdomain -shell userdebug_or_eng(`-su -sudaemon -qti-testscripts') -bluetooth}:process { transition dyntransition };
+)
 
 # Minimize read access to shell- or app-writable symlinks.
 # This is to prevent malicious symlink attacks.
